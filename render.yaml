@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: bugscan
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: PORT
+        value: 5000
