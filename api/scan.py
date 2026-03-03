@@ -66,17 +66,20 @@ SECURITY_HEADERS = [
 
 def get_driver():
     opts = Options()
-    opts.add_argument("--headless")
+    opts.add_argument("--headless=new")
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
     opts.add_argument("--disable-gpu")
+    opts.add_argument("--disable-extensions")
+    opts.add_argument("--disable-software-rasterizer")
+    opts.add_argument("--single-process")
+    opts.add_argument("--memory-pressure-off")
     opts.add_argument("--window-size=1280,800")
     opts.add_argument("user-agent=Mozilla/5.0 BugScanner/2.0")
-    driver = webdriver.Chrome(
-        service=Service(ChromeDriverManager().install()),
-        options=opts
-    )
-    driver.set_page_load_timeout(15)
+    opts.binary_location = "/usr/bin/google-chrome"
+    service = Service("/usr/bin/chromedriver")
+    driver = webdriver.Chrome(service=service, options=opts)
+    driver.set_page_load_timeout(20)
     return driver
 
 # ─── HTTP session for form submissions ───────────────────────────────────────
@@ -98,6 +101,50 @@ def safe_post(url, data=None, **kw):
 
 # ─── Crawl with Selenium (handles JS-rendered pages) ─────────────────────────
 
+def crawl_with_requests(base_url, max_pages, log):
+    """Fallback crawler using requests (no JS rendering)"""
+    visited   = set()
+    to_visit  = [base_url]
+    all_forms = []
+    domain    = urlparse(base_url).netloc
+
+    while to_visit and len(visited) < max_pages:
+        url = to_visit.pop(0)
+        if url in visited:
+            continue
+        visited.add(url)
+        r = safe_get(url)
+        if not r:
+            log.append(f"[!] Skipped {url}")
+            continue
+        soup = BeautifulSoup(r.text, "html.parser")
+        forms_on_page = 0
+        for form in soup.find_all("form"):
+            action = form.attrs.get("action", "").strip()
+            method = form.attrs.get("method", "get").strip().lower()
+            inputs = []
+            for tag in form.find_all(["input", "textarea", "select"]):
+                name  = tag.attrs.get("name")
+                itype = tag.attrs.get("type", "text")
+                if name:
+                    inputs.append({"name": name, "type": itype})
+            if inputs:
+                all_forms.append({
+                    "action": urljoin(url, action) if action else url,
+                    "method": method,
+                    "inputs": inputs,
+                    "page":   url,
+                })
+                forms_on_page += 1
+        for a in soup.find_all("a", href=True):
+            full = urljoin(url, a["href"])
+            p    = urlparse(full)
+            if p.netloc == domain and p.scheme in ("http","https") and full not in visited:
+                to_visit.append(full)
+        log.append(f"[+] Crawled: {url} ({forms_on_page} form(s))")
+    return all_forms, visited
+
+
 def crawl(base_url, max_pages=5):
     visited   = set()
     to_visit  = [base_url]
@@ -109,6 +156,7 @@ def crawl(base_url, max_pages=5):
     try:
         log.append("[*] Starting Chrome (headless)...")
         driver = get_driver()
+        log.append("[*] Chrome started successfully.")
 
         while to_visit and len(visited) < max_pages:
             url = to_visit.pop(0)
@@ -118,7 +166,7 @@ def crawl(base_url, max_pages=5):
 
             try:
                 driver.get(url)
-                WebDriverWait(driver, 8).until(
+                WebDriverWait(driver, 10).until(
                     EC.presence_of_element_located((By.TAG_NAME, "body"))
                 )
                 time.sleep(1)
@@ -156,10 +204,18 @@ def crawl(base_url, max_pages=5):
             except Exception as e:
                 log.append(f"[!] Skipped {url}: {str(e)[:80]}")
 
+    except Exception as e:
+        log.append(f"[!] Chrome failed: {str(e)[:100]}")
+        log.append("[*] Falling back to requests-based crawler...")
+        all_forms, visited = crawl_with_requests(base_url, max_pages, log)
+
     finally:
         if driver:
-            driver.quit()
-            log.append("[*] Browser closed.")
+            try:
+                driver.quit()
+                log.append("[*] Browser closed.")
+            except Exception:
+                pass
 
     return all_forms, visited, log
 
