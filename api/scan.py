@@ -279,18 +279,24 @@ def scan():
 
     findings = []
     log      = []
+    visited  = set()
+    forms    = []
 
-    forms, visited, crawl_log = crawl(target, max_pages)
-    log.extend(crawl_log)
+    try:
+        forms, visited, crawl_log = crawl(target, max_pages)
+        log.extend(crawl_log)
 
-    if not forms:
-        log.append("[!] No forms found on target pages.")
+        if not forms:
+            log.append("[!] No forms found on target pages.")
 
-    if modules.get("xss",     True) and forms: test_xss(forms, findings, log)
-    if modules.get("sqli",    True) and forms: test_sqli(forms, findings, log)
-    if modules.get("login",   True) and forms: test_login_bypass(forms, findings, log)
-    if modules.get("ssrf",    True) and forms: test_ssrf(forms, findings, log)
-    if modules.get("headers", True):           test_headers(target, findings, log)
+        if modules.get("xss",     True) and forms: test_xss(forms, findings, log)
+        if modules.get("sqli",    True) and forms: test_sqli(forms, findings, log)
+        if modules.get("login",   True) and forms: test_login_bypass(forms, findings, log)
+        if modules.get("ssrf",    True) and forms: test_ssrf(forms, findings, log)
+        if modules.get("headers", True):           test_headers(target, findings, log)
+
+    except Exception as e:
+        log.append(f"[!!] Scan error: {str(e)}")
 
     return jsonify({
         "target":        target,
